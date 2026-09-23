@@ -15,6 +15,7 @@ class MongoDBClient:
         self._in_memory_store: Dict[str, Dict[str, Any]] = {
             "datasets": {},
             "teacher_records": {},
+            "entity_records": {},
             "quality_reports": {},
             "validation_errors": {},
             "standardization_logs": {},
@@ -30,7 +31,6 @@ class MongoDBClient:
                 serverSelectionTimeoutMS=settings.MONGODB_TIMEOUT_MS,
                 connectTimeoutMS=settings.MONGODB_TIMEOUT_MS,
             )
-            # Check server availability
             self.client.admin.command('ping')
             self.db = self.client[settings.DATABASE_NAME]
             self.is_connected = True
@@ -55,6 +55,7 @@ class MongoDBClient:
             self.db.teacher_records.create_index([("dataset_id", pymongo.ASCENDING), ("row_number", pymongo.ASCENDING)])
             self.db.teacher_records.create_index([("dataset_id", pymongo.ASCENDING), ("Teacher_ID", pymongo.ASCENDING)])
             
+            self.db.entity_records.create_index([("dataset_id", pymongo.ASCENDING), ("entity", pymongo.ASCENDING)])
             self.db.quality_reports.create_index([("dataset_id", pymongo.ASCENDING)], unique=True)
             self.db.validation_errors.create_index([("dataset_id", pymongo.ASCENDING), ("severity", pymongo.ASCENDING)])
             self.db.standardization_logs.create_index([("dataset_id", pymongo.ASCENDING), ("column", pymongo.ASCENDING)])
@@ -84,7 +85,7 @@ class MongoDBClient:
         items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return items
 
-    # ---------------- Teacher Records ----------------
+    # ---------------- Teacher Records (Legacy & Compatibility) ----------------
     def insert_teacher_records(self, dataset_id: str, raw_records: List[Dict[str, Any]], clean_records: List[Dict[str, Any]]):
         doc = {
             "dataset_id": dataset_id,
@@ -100,6 +101,79 @@ class MongoDBClient:
         if self.is_connected and self.db is not None:
             return self.db.teacher_records.find_one({"dataset_id": dataset_id}, {"_id": 0})
         return self._in_memory_store["teacher_records"].get(dataset_id)
+
+    # ---------------- Multi-Entity Records ----------------
+    def insert_entity_records(
+        self,
+        dataset_id: str,
+        raw_records_by_entity: Dict[str, List[Dict[str, Any]]],
+        clean_records_by_entity: Dict[str, List[Dict[str, Any]]]
+    ):
+        doc = {
+            "dataset_id": dataset_id,
+            "raw_records_by_entity": raw_records_by_entity,
+            "clean_records_by_entity": clean_records_by_entity
+        }
+        if self.is_connected and self.db is not None:
+            self.db.entity_records.update_one({"dataset_id": dataset_id}, {"$set": doc}, upsert=True)
+        else:
+            self._in_memory_store["entity_records"][dataset_id] = doc
+
+        # Synchronize teacher_records if teachers are in the entity payload
+        if "teachers" in clean_records_by_entity:
+            self.insert_teacher_records(
+                dataset_id=dataset_id,
+                raw_records=raw_records_by_entity.get("teachers", []),
+                clean_records=clean_records_by_entity.get("teachers", [])
+            )
+
+    def get_entity_records(self, dataset_id: str, entity_type: str) -> Optional[List[Dict[str, Any]]]:
+        """Returns clean records for a specific entity."""
+        if self.is_connected and self.db is not None:
+            doc = self.db.entity_records.find_one({"dataset_id": dataset_id}, {"_id": 0})
+        else:
+            doc = self._in_memory_store["entity_records"].get(dataset_id)
+
+        if doc and "clean_records_by_entity" in doc:
+            return doc["clean_records_by_entity"].get(entity_type.lower())
+
+        # Fallback to teacher_records if entity is teachers
+        if entity_type.lower() in ("teacher", "teachers"):
+            tch_doc = self.get_teacher_records(dataset_id)
+            return tch_doc.get("clean_records") if tch_doc else None
+
+        return None
+
+    def get_raw_entity_records(self, dataset_id: str, entity_type: str) -> List[Dict[str, Any]]:
+        """Returns original ingested records for one entity without cleaning them."""
+        normalized_entity = entity_type.lower()
+        if self.is_connected and self.db is not None:
+            doc = self.db.entity_records.find_one({"dataset_id": dataset_id}, {"_id": 0})
+        else:
+            doc = self._in_memory_store["entity_records"].get(dataset_id)
+        if doc and "raw_records_by_entity" in doc:
+            return doc["raw_records_by_entity"].get(normalized_entity, [])
+        if normalized_entity in ("teacher", "teachers"):
+            teacher_doc = self.get_teacher_records(dataset_id)
+            return teacher_doc.get("raw_records", []) if teacher_doc else []
+        return []
+
+    def get_all_clean_records(self, dataset_id: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Returns dict of clean records for all available entities in the dataset."""
+        if self.is_connected and self.db is not None:
+            doc = self.db.entity_records.find_one({"dataset_id": dataset_id}, {"_id": 0})
+        else:
+            doc = self._in_memory_store["entity_records"].get(dataset_id)
+
+        if doc and "clean_records_by_entity" in doc:
+            return doc["clean_records_by_entity"]
+
+        # Fallback to teacher_records
+        tch_doc = self.get_teacher_records(dataset_id)
+        if tch_doc and "clean_records" in tch_doc:
+            return {"teachers": tch_doc["clean_records"]}
+
+        return {}
 
     # ---------------- Quality Reports ----------------
     def insert_quality_report(self, dataset_id: str, report: Dict[str, Any]):

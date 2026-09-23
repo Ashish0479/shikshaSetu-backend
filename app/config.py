@@ -1,5 +1,6 @@
 import os
 from typing import List
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -10,6 +11,18 @@ class Settings(BaseSettings):
     # Environment
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     DEBUG: bool = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug(cls, value):
+        """Tolerate host-level DEBUG values such as ``release``.
+
+        Some process managers export DEBUG=release, which is not a Pydantic
+        boolean but must not prevent the API (or its tests) from starting.
+        """
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes", "on", "debug"}
+        return value
     
     # MongoDB Configuration
     MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
