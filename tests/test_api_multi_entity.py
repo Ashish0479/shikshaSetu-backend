@@ -53,3 +53,26 @@ def test_multi_sheet_workbook_is_inspected_and_processed_as_multiple_entities():
     upload = client.post("/api/upload/multi", files=payload)
     assert upload.status_code == 201
     assert upload.json()["available_entities"] == ["teachers", "schools"]
+
+
+def test_single_combined_csv_upload_creates_teacher_school_enrollment_records():
+    client = TestClient(app, raise_server_exceptions=False)
+    csv_content = (
+        "Teacher_ID,Teacher_Name,Designation,Subject,Qualification,School_Code,School_Name,District,Block,"
+        "Student_Count,Class,Academic_Year\n"
+        "HR-TCH-10001,Asha Devi,PGT,Mathematics,M.Sc Mathematics,06120100101,GSSS Karnal,Karnal,Nilokheri,120,Class 10,2024-2025\n"
+        "HR-TCH-10002,Ram Singh,TGT,Science,B.Sc,06120100101,GSSS Karnal,Karnal,Nilokheri,90,Class 9,2024-2025\n"
+    )
+    upload = client.post("/api/upload", files={"file": ("combined_school_file.csv", csv_content, "text/csv")})
+    assert upload.status_code == 201
+    payload = upload.json()
+    assert "teachers" in payload["available_entities"]
+    assert "schools" in payload["available_entities"]
+    assert "enrollment" in payload["available_entities"]
+
+    dataset_id = payload["dataset_id"]
+    quality = client.get(f"/api/quality/{dataset_id}")
+    assert quality.status_code == 200
+    l3 = client.get(f"/api/quality/{dataset_id}/l3")
+    assert l3.status_code == 200
+    assert l3.json()["summary"]["schools_analyzed"] >= 1

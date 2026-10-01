@@ -67,6 +67,27 @@ class EntityDetector:
         EntityType.LOCATION: {"latitude", "longitude", "lat", "lon", "lng"},
     }
 
+    @staticmethod
+    def detect_combined_entity_types(columns: List[str]) -> List[EntityType]:
+        """Returns all entity families present in a combined education dataset."""
+        norm_cols = [EntityDetector._normalize_col_str(c) for c in columns]
+        norm_cols_set = set(norm_cols)
+
+        matches: List[EntityType] = []
+        combined_signatures = {
+            EntityType.TEACHER: EntityDetector.DISTINCTIVE_COLUMNS[EntityType.TEACHER],
+            EntityType.SCHOOL: EntityDetector.DISTINCTIVE_COLUMNS[EntityType.SCHOOL] | {"school_name"},
+            EntityType.ENROLLMENT: EntityDetector.DISTINCTIVE_COLUMNS[EntityType.ENROLLMENT],
+            EntityType.LOCATION: EntityDetector.DISTINCTIVE_COLUMNS[EntityType.LOCATION],
+        }
+        for entity, signature in combined_signatures.items():
+            if norm_cols_set.intersection(signature):
+                matches.append(entity)
+
+        if len(matches) >= 2:
+            return matches
+        return []
+
     @classmethod
     def detect_entity(
         cls,

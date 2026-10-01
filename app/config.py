@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     WEIGHT_CONSISTENCY: float = 0.20
     WEIGHT_UNIQUENESS: float = 0.20
 
+    # L3 deterministic analytics defaults
+    L3_PTR_THRESHOLD: float = float(os.getenv("L3_PTR_THRESHOLD", "35.0"))
+    L3_STATUS_TOLERANCE: float = float(os.getenv("L3_STATUS_TOLERANCE", "0.000001"))
+    L3_GEOGRAPHIC_DISTANCE_KM: float = float(os.getenv("L3_GEOGRAPHIC_DISTANCE_KM", "10.0"))
+
     class Config:
         case_sensitive = True
         env_file = ".env"

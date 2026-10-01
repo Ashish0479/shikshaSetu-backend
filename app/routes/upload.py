@@ -34,8 +34,10 @@ async def upload_dataset(file: UploadFile = File(...)):
                 filename=filename,
                 sheet_name=sheet_hint
             )
-            # If ambiguous but single file/sheet and has teacher-like columns, default to TEACHER for backward compat
-            if detection.entity_type == EntityType.UNKNOWN and len(dfs_by_source) == 1:
+            combined_types = EntityDetector.detect_combined_entity_types(list(df.columns))
+            if detection.entity_type == EntityType.UNKNOWN and len(dfs_by_source) == 1 and combined_types:
+                detection.entity_type = EntityType.TEACHER
+            elif detection.entity_type == EntityType.UNKNOWN and len(dfs_by_source) == 1:
                 detection.entity_type = EntityType.TEACHER
             detected_entities[source_key] = detection.entity_type
 

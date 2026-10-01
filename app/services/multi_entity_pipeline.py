@@ -40,6 +40,24 @@ from app.utils.helpers import (
 
 
 class MultiEntityPipelineService:
+    @staticmethod
+    def _split_combined_dataframe(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+        """Splits a single mixed education dataset into teacher / school / enrollment subframes."""
+        result: Dict[str, pd.DataFrame] = {}
+        for entity in [EntityType.TEACHER, EntityType.SCHOOL, EntityType.ENROLLMENT]:
+            mapper = SchemaMapper(entity)
+            mapped_df, renames, unmapped = mapper.apply_mapping_to_dataframe(df)
+            selected_cols = [col for col in mapped_df.columns if col in mapper.canonical_columns]
+            if not selected_cols:
+                continue
+            sub_df = mapped_df[selected_cols].copy()
+            if sub_df.empty:
+                continue
+            result[entity.value] = sub_df
+        if not result:
+            return {EntityType.TEACHER.value: df.copy()}
+        return result
+
     @classmethod
     def execute_multi_entity_pipeline(
         cls,
@@ -61,6 +79,18 @@ class MultiEntityPipelineService:
         pid = processing_id or str(uuid.uuid4())
         created_at = datetime.now().isoformat()
 
+        normalized_dfs: Dict[str, pd.DataFrame] = {}
+        normalized_types: Dict[str, EntityType] = {}
+        for source_key, df in raw_entity_dfs.items():
+            if len(raw_entity_dfs) == 1 and EntityDetector.detect_combined_entity_types(list(df.columns)):
+                for entity_name, entity_df in cls._split_combined_dataframe(df).items():
+                    normalized_key = f"{source_key}:{entity_name}"
+                    normalized_dfs[normalized_key] = entity_df
+                    normalized_types[normalized_key] = EntityType.from_str(entity_name)
+                continue
+            normalized_dfs[source_key] = df
+            normalized_types[source_key] = detected_entity_types.get(source_key, EntityType.UNKNOWN)
+
         # Group dataframes by resolved EntityType
         # If multiple files map to the same entity, concatenate them
         dfs_by_entity: Dict[str, List[pd.DataFrame]] = {
@@ -72,8 +102,8 @@ class MultiEntityPipelineService:
 
         schema_mappings_summary: Dict[str, Any] = {}
 
-        for source_key, df in raw_entity_dfs.items():
-            entity_type = detected_entity_types.get(source_key, EntityType.UNKNOWN)
+        for source_key, df in normalized_dfs.items():
+            entity_type = normalized_types.get(source_key, EntityType.UNKNOWN)
             if entity_type == EntityType.UNKNOWN:
                 continue
 

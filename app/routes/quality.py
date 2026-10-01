@@ -12,6 +12,7 @@ from app.services.duplicate_service import DuplicateService
 from app.services.school_cleaning_service import SchoolCleaningService
 from app.services.enrollment_cleaning_service import EnrollmentCleaningService
 from app.services.location_cleaning_service import LocationCleaningService
+from app.services.l3_analysis_service import L3AnalysisService
 from app.utils.helpers import is_null_or_empty, CRITICAL_COLUMNS
 
 router = APIRouter(prefix="/quality", tags=["Data Quality Analysis"])
@@ -170,3 +171,26 @@ async def get_validation_issues(
     if column:
         errors = [e for e in errors if str(e.get("column", "")).lower() == column.lower()]
     return errors
+
+
+@router.get("/{dataset_id}/l3")
+async def get_l3_analysis(
+    dataset_id: str,
+    ptr_threshold: Optional[float] = Query(None, description="Optional PTR threshold override"),
+    max_distance_km: Optional[float] = Query(None, description="Optional geospatial imbalance threshold")
+):
+    """Runs the deterministic Layer 3 analytics across cleaned teacher, school, and enrollment data."""
+    metadata = db_client.get_dataset(dataset_id)
+    if not metadata:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+
+    clean_records = db_client.get_all_clean_records(dataset_id)
+    if not clean_records:
+        raise HTTPException(status_code=404, detail=f"No cleaned records found for dataset '{dataset_id}'.")
+
+    analysis = L3AnalysisService.analyze_record_sets(
+        clean_data=clean_records,
+        ptr_threshold=ptr_threshold,
+        max_distance_km=max_distance_km,
+    )
+    return analysis
