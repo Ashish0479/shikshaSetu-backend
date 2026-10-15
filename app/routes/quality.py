@@ -1,5 +1,7 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field, field_validator
 from app.database.mongodb import db_client
 from app.models.schemas import (
     QualityReportResponse,
@@ -13,9 +15,44 @@ from app.services.school_cleaning_service import SchoolCleaningService
 from app.services.enrollment_cleaning_service import EnrollmentCleaningService
 from app.services.location_cleaning_service import LocationCleaningService
 from app.services.l3_analysis_service import L3AnalysisService
+from app.services.l4_analysis_service import L4AnalysisService
+from app.services.l5_optimization_service import (
+    ConstraintRegistry,
+    L5ConfigurationError,
+    L5InputError,
+    L5OptimizationService,
+)
 from app.utils.helpers import is_null_or_empty, CRITICAL_COLUMNS
 
 router = APIRouter(prefix="/quality", tags=["Data Quality Analysis"])
+
+
+class L5GenerateRequest(BaseModel):
+    scenario_count: int = Field(default=3, ge=1, le=10)
+    time_limit_seconds: float = Field(default=10.0, gt=0, le=300)
+    constraint_registry_version: str = "unconfigured"
+    constraints: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class L5ReviewRequest(BaseModel):
+    decision: str
+    reviewer_id: str
+    reason: Optional[str] = None
+
+    @field_validator("decision")
+    @classmethod
+    def validate_decision(cls, value: str) -> str:
+        normalized = value.upper()
+        if normalized not in {"ACCEPT", "REJECT", "OVERRIDE"}:
+            raise ValueError("decision must be ACCEPT, REJECT, or OVERRIDE")
+        return normalized
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: Optional[str], info) -> Optional[str]:
+        if info.data.get("decision") == "OVERRIDE" and not (value or "").strip():
+            raise ValueError("reason is required for OVERRIDE.")
+        return value
 
 
 @router.get("/{dataset_id}", response_model=QualityReportResponse)
@@ -194,3 +231,70 @@ async def get_l3_analysis(
         max_distance_km=max_distance_km,
     )
     return analysis
+
+
+@router.get("/{dataset_id}/l4")
+async def get_l4_analysis(dataset_id: str):
+    """Runs explainable Layer 4 predictive analytics using the cleaned dataset and prior L3 outputs."""
+    metadata = db_client.get_dataset(dataset_id)
+    if not metadata:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+
+    clean_records = db_client.get_all_clean_records(dataset_id)
+    if not clean_records:
+        raise HTTPException(status_code=404, detail=f"No cleaned records found for dataset '{dataset_id}'.")
+
+    l3_analysis = L3AnalysisService.analyze_record_sets(clean_records)
+    l4_analysis = L4AnalysisService.analyze_record_sets(clean_records)
+    l4_analysis["l3_context"] = l3_analysis
+    return l4_analysis
+
+
+@router.post("/{dataset_id}/l5")
+async def generate_l5_scenarios(dataset_id: str, request: L5GenerateRequest):
+    """Generate advisory staffing scenarios; this endpoint never authorizes a move."""
+    metadata = db_client.get_dataset(dataset_id)
+    if not metadata:
+        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+    clean_records = db_client.get_all_clean_records(dataset_id)
+    if not clean_records:
+        raise HTTPException(status_code=404, detail=f"No cleaned records found for dataset '{dataset_id}'.")
+    try:
+        registry = ConstraintRegistry(request.constraints, request.constraint_registry_version)
+        l3_analysis = L3AnalysisService.analyze_record_sets(clean_records)
+        l4_analysis = L4AnalysisService.analyze_record_sets(clean_records)
+        result = L5OptimizationService.generate_scenarios(
+            clean_records, registry, l3_analysis, l4_analysis,
+            request.scenario_count, request.time_limit_seconds,
+        )
+    except (L5ConfigurationError, L5InputError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    for scenario in result["scenarios"]:
+        db_client.insert_l5_scenario({
+            **scenario,
+            "dataset_id": dataset_id,
+            "input_snapshot_reference": {
+                "dataset_id": dataset_id,
+                "available_entities": metadata.get("available_entities", []),
+                "entity_counts": metadata.get("entity_counts", {}),
+            },
+            "constraint_registry_version": result["constraint_registry_version"],
+            "generated_at": result["generated_at"],
+            "review": None,
+        })
+    return {"dataset_id": dataset_id, **result}
+
+
+@router.post("/l5/{scenario_id}/review")
+async def review_l5_scenario(scenario_id: str, request: L5ReviewRequest):
+    """Record human review of an advisory scenario; it does not execute a decision."""
+    scenario = db_client.get_l5_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found.")
+    review = {
+        "decision": request.decision,
+        "reviewer_id": request.reviewer_id,
+        "reason": request.reason,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return db_client.update_l5_scenario_review(scenario_id, review)

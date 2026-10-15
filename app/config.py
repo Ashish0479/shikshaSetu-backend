@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     L3_STATUS_TOLERANCE: float = float(os.getenv("L3_STATUS_TOLERANCE", "0.000001"))
     L3_GEOGRAPHIC_DISTANCE_KM: float = float(os.getenv("L3_GEOGRAPHIC_DISTANCE_KM", "10.0"))
 
+    # L4 deterministic predictive defaults
+    RETIREMENT_AGE: int = int(os.getenv("RETIREMENT_AGE", "60"))
+    FORECAST_HORIZON_YEARS: int = int(os.getenv("FORECAST_HORIZON_YEARS", "5"))
+    TARGET_PTR: float = float(os.getenv("TARGET_PTR", "35.0"))
+
     class Config:
         case_sensitive = True
         env_file = ".env"

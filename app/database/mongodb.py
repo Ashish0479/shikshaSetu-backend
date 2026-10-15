@@ -19,6 +19,7 @@ class MongoDBClient:
             "quality_reports": {},
             "validation_errors": {},
             "standardization_logs": {},
+            "l5_scenarios": {},
         }
         self.connect()
 
@@ -214,5 +215,28 @@ class MongoDBClient:
         if self.is_connected and self.db is not None:
             return self.db.standardization_logs.find_one({"dataset_id": dataset_id}, {"_id": 0})
         return self._in_memory_store["standardization_logs"].get(dataset_id)
+
+    # ---------------- Layer 5 advisory scenarios ----------------
+    def insert_l5_scenario(self, scenario: Dict[str, Any]) -> None:
+        scenario_id = scenario["scenario_id"]
+        if self.is_connected and self.db is not None:
+            self.db.l5_scenarios.update_one(
+                {"scenario_id": scenario_id}, {"$set": scenario}, upsert=True
+            )
+        else:
+            self._in_memory_store["l5_scenarios"][scenario_id] = scenario
+
+    def get_l5_scenario(self, scenario_id: str) -> Optional[Dict[str, Any]]:
+        if self.is_connected and self.db is not None:
+            return self.db.l5_scenarios.find_one({"scenario_id": scenario_id}, {"_id": 0})
+        return self._in_memory_store["l5_scenarios"].get(scenario_id)
+
+    def update_l5_scenario_review(self, scenario_id: str, review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        scenario = self.get_l5_scenario(scenario_id)
+        if not scenario:
+            return None
+        scenario["review"] = review
+        self.insert_l5_scenario(scenario)
+        return scenario
 
 db_client = MongoDBClient()
