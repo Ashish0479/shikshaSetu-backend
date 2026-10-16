@@ -20,6 +20,7 @@ class MongoDBClient:
             "validation_errors": {},
             "standardization_logs": {},
             "l5_scenarios": {},
+            "l5_review_events": {},
         }
         self.connect()
 
@@ -60,6 +61,7 @@ class MongoDBClient:
             self.db.quality_reports.create_index([("dataset_id", pymongo.ASCENDING)], unique=True)
             self.db.validation_errors.create_index([("dataset_id", pymongo.ASCENDING), ("severity", pymongo.ASCENDING)])
             self.db.standardization_logs.create_index([("dataset_id", pymongo.ASCENDING), ("column", pymongo.ASCENDING)])
+            self.db.l5_review_events.create_index([("scenario_id", pymongo.ASCENDING), ("reviewed_at", pymongo.ASCENDING)])
             logger.info("MongoDB indexes verified.")
         except Exception as e:
             logger.error(f"Failed to create MongoDB indexes: {e}")
@@ -238,5 +240,20 @@ class MongoDBClient:
         scenario["review"] = review
         self.insert_l5_scenario(scenario)
         return scenario
+
+    def append_l5_review_event(self, scenario_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Append an immutable review event without replacing prior history."""
+        if self.is_connected and self.db is not None:
+            self.db.l5_review_events.insert_one({**event, "scenario_id": scenario_id})
+            events = list(self.db.l5_review_events.find({"scenario_id": scenario_id}, {"_id": 0}).sort("reviewed_at", 1))
+        else:
+            events = self._in_memory_store["l5_review_events"].setdefault(scenario_id, [])
+            events.append({**event, "scenario_id": scenario_id})
+        return {"scenario_id": scenario_id, "event": event, "events": events}
+
+    def get_l5_review_events(self, scenario_id: str) -> List[Dict[str, Any]]:
+        if self.is_connected and self.db is not None:
+            return list(self.db.l5_review_events.find({"scenario_id": scenario_id}, {"_id": 0}).sort("reviewed_at", 1))
+        return list(self._in_memory_store["l5_review_events"].get(scenario_id, []))
 
 db_client = MongoDBClient()

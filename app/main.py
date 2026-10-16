@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.config import settings
-from app.routes import upload, datasets, quality
+from app.routes import upload, datasets, quality, l6
 from app.database.mongodb import db_client
 
 logging.basicConfig(
@@ -36,6 +36,7 @@ app.add_middleware(
 app.include_router(upload.router, prefix=settings.API_V1_STR)
 app.include_router(datasets.router, prefix=settings.API_V1_STR)
 app.include_router(quality.router, prefix=settings.API_V1_STR)
+app.include_router(l6.router, prefix=settings.API_V1_STR)
 
 @app.on_event("startup")
 async def startup_event():

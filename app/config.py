@@ -1,9 +1,19 @@
 import os
+from pathlib import Path
 from typing import List
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+BACKEND_ENV_FILE = BACKEND_DIR / ".env"
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=BACKEND_ENV_FILE,
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     PROJECT_NAME: str = "Teacher Data Quality & Standardization System"
     PROJECT_VERSION: str = "1.0.0"
     API_V1_STR: str = "/api"
@@ -58,9 +68,11 @@ class Settings(BaseSettings):
     FORECAST_HORIZON_YEARS: int = int(os.getenv("FORECAST_HORIZON_YEARS", "5"))
     TARGET_PTR: float = float(os.getenv("TARGET_PTR", "35.0"))
 
-    class Config:
-        case_sensitive = True
-        env_file = ".env"
-        extra = "ignore"
+    # Layer 6 provider and prompt limits
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    GEMINI_TIMEOUT_SECONDS: float = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
+    L6_MAX_CONTEXT_CHARS: int = int(os.getenv("L6_MAX_CONTEXT_CHARS", "24000"))
+    L6_MAX_OUTPUT_CHARS: int = int(os.getenv("L6_MAX_OUTPUT_CHARS", "6000"))
 
 settings = Settings()
